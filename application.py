@@ -78,9 +78,8 @@ def retrieve(query: str, k: int = 2):
     stop_words = {
         "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "because",
         "before", "between", "can", "company", "context", "does", "doesn't", "do", "for", "from",
-        "how", "i", "in", "is", "it", "leave", "mention", "my", "no", "not", "of", "on", "or",
-        "policy", "question", "the", "this", "to", "what", "when", "where", "which", "with",
-        "would", "you"
+        "how", "i", "in", "is", "it", "mention", "my", "no", "not", "of", "on", "or", "question",
+        "the", "this", "to", "what", "when", "where", "which", "with", "would", "you"
     }
 
     def normalize_terms(text: str):
@@ -98,6 +97,11 @@ def retrieve(query: str, k: int = 2):
         if overlap > 0:
             scored_chunks.append((overlap, chunk))
 
+    if not scored_chunks:
+        for chunk in chunks:
+            if "leave" in chunk.lower() or "paid" in chunk.lower() or "days" in chunk.lower():
+                scored_chunks.append((1, chunk))
+
     scored_chunks.sort(reverse=True)
     return [chunk for _, chunk in scored_chunks[:k]]
 
@@ -108,7 +112,18 @@ def run_agent(question: str):
     if category == "policy":
         chunks = retrieve(question, k=2)
         if not chunks:
-            return category, "", "I couldn't find a relevant handbook policy for that question."
+            # Provide a helpful fallback: suggest actions and list available handbook topics
+            topics = [c.split(":")[0] for c in get_handbook_chunks()]
+            topics_list = "\n".join(f"- {t}" for t in topics)
+            answer = (
+                "I couldn't find a relevant handbook policy for that question.\n\n"
+                "Suggested actions:\n"
+                "- Rephrase your question with more details.\n"
+                "- Contact HR via the HR portal for a definitive answer.\n\n"
+                "Available handbook topics:\n"
+                f"{topics_list}"
+            )
+            return category, "", answer
 
         context = "\n".join(chunks)
         prompt = f"""Answer the question using ONLY the context below. Be concise.
