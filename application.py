@@ -72,15 +72,31 @@ def classify_question(question: str) -> str:
 
 
 def retrieve(query: str, k: int = 2):
-    chunks = get_handbook_chunks()
-    query_terms = [term for term in query.lower().split() if term]
-    scored_chunks = []
+    import re
 
+    chunks = get_handbook_chunks()
+    stop_words = {
+        "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "because",
+        "before", "between", "can", "company", "context", "does", "doesn't", "do", "for", "from",
+        "how", "i", "in", "is", "it", "leave", "mention", "my", "no", "not", "of", "on", "or",
+        "policy", "question", "the", "this", "to", "what", "when", "where", "which", "with",
+        "would", "you"
+    }
+
+    def normalize_terms(text: str):
+        cleaned = re.sub(r"[^a-z0-9\s]", " ", text.lower())
+        return [term for term in cleaned.split() if len(term) > 2 and term not in stop_words]
+
+    query_terms = set(normalize_terms(query))
+    if not query_terms:
+        return []
+
+    scored_chunks = []
     for chunk in chunks:
-        chunk_lower = chunk.lower()
-        score = sum(1 for term in query_terms if term in chunk_lower)
-        if score > 0:
-            scored_chunks.append((score, chunk))
+        chunk_terms = set(normalize_terms(chunk))
+        overlap = len(query_terms & chunk_terms)
+        if overlap > 0:
+            scored_chunks.append((overlap, chunk))
 
     scored_chunks.sort(reverse=True)
     return [chunk for _, chunk in scored_chunks[:k]]
@@ -91,6 +107,9 @@ def run_agent(question: str):
 
     if category == "policy":
         chunks = retrieve(question, k=2)
+        if not chunks:
+            return category, "", "I couldn't find a relevant handbook policy for that question."
+
         context = "\n".join(chunks)
         prompt = f"""Answer the question using ONLY the context below. Be concise.
 Context:
