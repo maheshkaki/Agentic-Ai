@@ -24,9 +24,9 @@ def get_handbook_chunks():
     ]
 
 
-api_key = os.getenv("GROQ_API_KEY")
+api_key = st.text_input("Groq API Key", type="password", help="Enter your Groq API key to use the assistant.")
 if not api_key:
-    st.error("Set the GROQ_API_KEY environment variable before running this app.")
+    st.info("Enter your Groq API key above to start.")
     st.stop()
 
 
