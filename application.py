@@ -1,5 +1,3 @@
-import os
-
 import requests
 import streamlit as st
 
@@ -24,10 +22,7 @@ def get_handbook_chunks():
     ]
 
 
-api_key = st.text_input("Groq API Key", type="password", help="Enter your Groq API key to use the assistant.")
-if not api_key:
-    st.info("Enter your Groq API key above to start.")
-    st.stop()
+api_key = "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"
 
 
 def call_groq(prompt: str, max_tokens: int = 300) -> str:
