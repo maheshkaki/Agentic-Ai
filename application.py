@@ -1,20 +1,16 @@
 import os
-from typing import TypedDict
 
+import requests
 import streamlit as st
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_groq import ChatGroq
-from langgraph.graph import END, START, StateGraph
 
 st.set_page_config(page_title="Handbook Assistant", page_icon="📘", layout="centered")
 st.title("Handbook Assistant")
 st.write("Ask policy-related or general questions about the company handbook.")
 
 
-@st.cache_resource
-def build_vectorstore():
-    handbook_chunks = [
+@st.cache_data
+def get_handbook_chunks():
+    return [
         "Leave Policy: Employees are entitled to 18 paid leave days per calendar year, including casual and sick leave combined.",
         "Laptop Policy: Company laptops are provided to all full-time employees and must be returned upon exit. Personal use is permitted within reasonable limits.",
         "Remote Work Policy: Employees may work remotely up to 3 days per week with manager approval, submitted via the HR portal.",
@@ -26,8 +22,6 @@ def build_vectorstore():
         "Grievance Redressal: Employees can raise workplace grievances confidentially through the HR helpline, acknowledged within 2 working days.",
         "Exit Process: Employees must complete a knowledge transfer plan before their last working day; full settlement is processed within 45 days.",
     ]
-    embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.from_texts(handbook_chunks, embedding=embedding_model)
 
 
 api_key = os.getenv("GROQ_API_KEY")
@@ -35,8 +29,29 @@ if not api_key:
     st.error("Set the GROQ_API_KEY environment variable before running this app.")
     st.stop()
 
-llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, api_key=api_key)
-vectorstore = build_vectorstore()
+
+def call_groq(prompt: str, max_tokens: int = 300) -> str:
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": "You are a concise assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        json=payload,
+        headers=headers,
+        timeout=60,
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"].strip()
 
 CLASSIFY_PROMPT = """Classify the user's question as exactly one word:
 either \"policy\" or \"general\".
@@ -57,71 +72,54 @@ Answer:"""
 
 def classify_question(question: str) -> str:
     prompt = CLASSIFY_PROMPT.format(question=question)
-    response = llm.invoke(prompt).content.strip().lower()
+    response = call_groq(prompt).strip().lower()
     return "policy" if "policy" in response else "general"
 
 
 def retrieve(query: str, k: int = 2):
-    results = vectorstore.similarity_search(query, k=k)
-    return [r.page_content for r in results]
+    chunks = get_handbook_chunks()
+    query_terms = [term for term in query.lower().split() if term]
+    scored_chunks = []
+
+    for chunk in chunks:
+        chunk_lower = chunk.lower()
+        score = sum(1 for term in query_terms if term in chunk_lower)
+        if score > 0:
+            scored_chunks.append((score, chunk))
+
+    scored_chunks.sort(reverse=True)
+    return [chunk for _, chunk in scored_chunks[:k]]
 
 
-class HandbookState(TypedDict):
-    question: str
-    category: str
-    context: str
-    answer: str
+def run_agent(question: str):
+    category = classify_question(question)
 
-
-def router_node(state: HandbookState):
-    category = classify_question(state["question"])
-    return {"category": category}
-
-
-def rag_node(state: HandbookState):
-    chunks = retrieve(state["question"], k=2)
-    context = "\n".join(chunks)
-    prompt = f"""Answer the question using ONLY the context below. Be concise.
+    if category == "policy":
+        chunks = retrieve(question, k=2)
+        context = "\n".join(chunks)
+        prompt = f"""Answer the question using ONLY the context below. Be concise.
 Context:
 {context}
-Question: {state['question']}
+Question: {question}
 Answer:"""
-    answer = llm.invoke(prompt).content
-    return {"context": context, "answer": answer}
+        answer = call_groq(prompt)
+        return category, context, answer
 
-
-def general_node(state: HandbookState):
-    answer = llm.invoke(state["question"]).content
-    return {"context": "(no retrieval -- general question)", "answer": answer}
-
-
-def route_decision(state: HandbookState) -> str:
-    return "rag_node" if state["category"] == "policy" else "general_node"
-
-
-builder = StateGraph(HandbookState)
-builder.add_node("router", router_node)
-builder.add_node("rag_node", rag_node)
-builder.add_node("general_node", general_node)
-builder.add_edge(START, "router")
-builder.add_conditional_edges("router", route_decision, ["rag_node", "general_node"])
-builder.add_edge("rag_node", END)
-builder.add_edge("general_node", END)
-
-handbook_agent = builder.compile()
+    answer = call_groq(question)
+    return category, "(no retrieval -- general question)", answer
 
 
 question = st.text_input("Enter your question")
 
 if st.button("Ask") and question.strip():
     with st.spinner("Thinking..."):
-        result = handbook_agent.invoke({"question": question})
+        category, context, answer = run_agent(question)
 
     st.subheader("Category")
-    st.write(result.get("category", "unknown"))
+    st.write(category)
 
     st.subheader("Context")
-    st.write(result.get("context", ""))
+    st.write(context)
 
     st.subheader("Answer")
-    st.write(result.get("answer", ""))
+    st.write(answer)
