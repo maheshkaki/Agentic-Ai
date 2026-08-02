@@ -3,7 +3,7 @@ import streamlit as st
 
 st.set_page_config(page_title="Handbook Assistant", page_icon="📘", layout="centered")
 st.title("Handbook Assistant")
-st.write("Ask policy-related or general questions about the company handbook.")
+st.caption("Ask policy-related or general questions about the company handbook.")
 
 
 @st.cache_data
@@ -104,17 +104,26 @@ Answer:"""
     return category, "(no retrieval -- general question)", answer
 
 
-question = st.text_input("Enter your question")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-if st.button("Ask") and question.strip():
-    with st.spinner("Thinking..."):
-        category, context, answer = run_agent(question)
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    st.subheader("Category")
-    st.write(category)
+if prompt := st.chat_input("Ask about the handbook..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-    st.subheader("Context")
-    st.write(context)
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            category, context, answer = run_agent(prompt)
 
-    st.subheader("Answer")
-    st.write(answer)
+        st.markdown(answer)
+        st.caption(f"Category: {category}")
+        if context and context != "(no retrieval -- general question)":
+            with st.expander("Retrieved context"):
+                st.write(context)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
